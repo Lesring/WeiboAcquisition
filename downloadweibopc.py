@@ -4,21 +4,23 @@ import time
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional
+
 import requests
 from requests.exceptions import ReadTimeout, ConnectTimeout, ChunkedEncodingError, RequestException
 
-# ========== 配置 ==========
-JSONL_PATH = Path("weibovault_5635286888_pc.jsonl")  # 改成你的 jsonl 文件名
-OUT_DIR = Path(r"D:\lww")                             # 输出目录
-TIMEOUT = (10, 60)  # (连接超时, 读取超时) 秒
+from weibo_env import env_float, env_path, env_str, env_user_agent, http_timeout_pair
+
+_UID = env_str("WEIBO_UID", "5635286888")
+
+# ========== 配置（.env）==========
+JSONL_PATH = env_path("WEIBO_JSONL_PC", Path(f"weibovault_{_UID}_pc.jsonl"))
+OUT_DIR = env_path("WEIBO_DOWNLOAD_DIR", Path(r"D:\lww"))
+TIMEOUT = http_timeout_pair(default_read=60)
 RETRIES = 5
-SLEEP_SEC = 0.8                                       # 每个文件下载后停一下，降低风控
+SLEEP_SEC = env_float("WEIBO_SLEEP_SEC", 0.8)
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
-# 如果图片/视频链接访问需要登录态，把你爬虫里用的 Cookie 复制到这里（可留空）
-COOKIE = r"""SCF=AvkAo2rEkoAXVkmpxbnyxhxF2WvTHTZrYVwxH1S-CmsduSSPvwh1Q_9eB-kEy6rZG43por7jp-SI3S1bjp2Ge7Y.; SUB=_2A25EfBDPDeRhGeFH6VQR8S_LzTuIHXVn8CwHrDV8PUNbmtANLRLakW9Ne42WMpLh8hcy75zzRTLDEC7f2VyvjzVj; SUBP=0033WrSXqPxfM725Ws9jqgMF55529P9D9WW.wZE0u6EW0W006O-QhbZU5JpX5KzhUgL.FoM4eoq7eK2NSoM2dJLoIp7LxKML1KBLBKnLxKqL1hnLBoMN1Kzceh2pS0qN; ALF=02_1772088735; _s_tentry=weibo.com; Apache=9752337625877.506.1769496845038; SINAGLOBAL=9752337625877.506.1769496845038; ULV=1769496845064:1:1:1:9752337625877.506.1769496845038:"""
+UA = env_user_agent()
+COOKIE = env_str("WEIBO_COOKIE")
 
 # ========== 工具函数 ==========
 def safe_name(s: str) -> str:

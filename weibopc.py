@@ -2,17 +2,14 @@ import json, re, time
 from pathlib import Path
 import requests
 
-UID = "5635286888"
-OUT = Path(f"weibovault_{UID}_pc.jsonl")
+from weibo_env import env_path, env_str, env_user_agent
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+UID = env_str("WEIBO_UID", "5635286888")
+OUT = env_path("WEIBO_JSONL_PC", Path(f"weibovault_{UID}_pc.jsonl"))
 
-# 1) 先在浏览器登录 weibo.com
-# 2) F12 -> Network -> 找任意 weibo.com 请求 -> Request Headers 里复制 Cookie
-COOKIE = r"""SCF=AvkAo2rEkoAXVkmpxbnyxhxF2WvTHTZrYVwxH1S-CmsduSSPvwh1Q_9eB-kEy6rZG43por7jp-SI3S1bjp2Ge7Y.; SUB=_2A25EfBDPDeRhGeFH6VQR8S_LzTuIHXVn8CwHrDV8PUNbmtANLRLakW9Ne42WMpLh8hcy75zzRTLDEC7f2VyvjzVj; SUBP=0033WrSXqPxfM725Ws9jqgMF55529P9D9WW.wZE0u6EW0W006O-QhbZU5JpX5KzhUgL.FoM4eoq7eK2NSoM2dJLoIp7LxKML1KBLBKnLxKqL1hnLBoMN1Kzceh2pS0qN; ALF=02_1772088735; _s_tentry=weibo.com; Apache=9752337625877.506.1769496845038; SINAGLOBAL=9752337625877.506.1769496845038; ULV=1769496845064:1:1:1:9752337625877.506.1769496845038:"""
-# 3) Application/Storage -> Cookies -> weibo.com 找 XSRF-TOKEN 值
-XSRF = "gtoER2-D_HJCp9f1KrtkEjTj"
+UA = env_user_agent()
+COOKIE = env_str("WEIBO_COOKIE")
+XSRF = env_str("WEIBO_XSRF_PC")
 
 def strip_html(s: str) -> str:
     s = s or ""
@@ -98,6 +95,11 @@ def load_seen():
     return seen
 
 def main():
+    if not COOKIE.strip():
+        raise SystemExit("请在 .env 中设置 WEIBO_COOKIE（见 .env.example）")
+    if not XSRF.strip():
+        raise SystemExit("请在 .env 中设置 WEIBO_XSRF_PC（见 .env.example）")
+
     seen = load_seen()
 
     s = requests.Session()

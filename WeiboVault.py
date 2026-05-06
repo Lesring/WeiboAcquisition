@@ -6,16 +6,17 @@ from typing import Dict, Any, List, Tuple, Optional
 
 import requests
 
-UID = "5635286888"
+from weibo_env import env_path, env_str, env_user_agent
+
+UID = env_str("WEIBO_UID", "5635286888")
 CONTAINER_ID = f"107603{UID}"
 BASE = (
     "https://m.weibo.cn/api/container/getIndex"
     f"?type=uid&value={UID}&containerid={CONTAINER_ID}"
 )
 
-OUT = Path(f"weibovault_{UID}.jsonl")
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+OUT = env_path("WEIBO_JSONL_MOBILE", Path(f"weibovault_{UID}.jsonl"))
+UA = env_user_agent()
 
 def strip_html(s: str) -> str:
     s = s or ""

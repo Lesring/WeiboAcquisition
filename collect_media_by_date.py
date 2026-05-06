@@ -2,10 +2,12 @@ import re
 import shutil
 from pathlib import Path
 
-# ====== 需要你改的 3 个路径 ======
-SRC_ROOT = Path(r"D:\lww")                  # 你的下载根目录（原目录）
-DST_IMAGES = Path(r"D:\lww_collect\images") # 新的图片汇总目录
-DST_VIDEOS = Path(r"D:\lww_collect\videos") # 新的视频汇总目录
+from weibo_env import env_path
+
+# ====== 配置（.env）======
+SRC_ROOT = env_path("WEIBO_COLLECT_SRC", Path(r"D:\lww"))
+DST_IMAGES = env_path("WEIBO_COLLECT_DST_IMAGES", Path(r"D:\lww_collect\images"))
+DST_VIDEOS = env_path("WEIBO_COLLECT_DST_VIDEOS", Path(r"D:\lww_collect\videos"))
 
 # ====== 可选：只处理这些后缀 ======
 IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}

@@ -7,38 +7,31 @@ from typing import Dict, Any, List, Tuple, Optional
 
 import requests
 
-# ================== 配置 ==================
-UID = "5635286888"
+from weibo_env import env_float, env_int, env_path, env_str, env_user_agent, http_timeout_pair
+
+# ================== 配置（.env / .env.example）==================
+UID = env_str("WEIBO_UID", "5635286888")
 CONTAINER_ID = f"107603{UID}"
 API = "https://m.weibo.cn/api/container/getIndex"
 
-OUT = Path(f"weibovault_{UID}_m_pre20170301.jsonl")
+OUT = env_path("WEIBO_JSONL_M_PRE", Path(f"weibovault_{UID}_m_pre20170301.jsonl"))
 
-# 抓到这个日期(含)之前就停止：2017-03-01 00:00:00 +0800
-STOP_BEFORE = datetime(2014, 3, 1, 0, 0, 0).astimezone()  # 以本机时区为准，不用于比较
-# 我们按微博时间字符串自带的 +0800 来解析后比较
+UA = env_user_agent()
+COOKIE = env_str("WEIBO_COOKIE")
+M_XSRF = env_str("WEIBO_XSRF_M").strip() or env_str("WEIBO_XSRF_PC").strip()
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+SLEEP_SEC = env_float("WEIBO_SLEEP_SEC", 1.0)
+TIMEOUT = http_timeout_pair(default_connect=10, default_read=30)
+MAX_PAGES = env_int("WEIBO_M_MAX_PAGES", 10000)
 
-# 你提供的 cookie（建议按 name=value; 拼成一行）
-# 注意：__cf_bm 是 geetest.com 的，不要放进来；只放 weibo.cn / m.weibo.cn 域的即可
-COOKIE = (
-    "M_WEIBOCN_PARAMS=luicode%3D20000174%26lfid%3D231583%26launchid%3D10000360-page_H5%26oid%3D4217165634776166%26fid%3D1076035635286888%26uicode%3D10000011; "
-    "XSRF-TOKEN=bef309; "
-    "SUB=_2A25EfBDzDeRhGeFH6VQR8S_LzTuIHXVn8Cw7rDV6PUJbktANLWfdkW1Ne42WMp4jmnBYkOqLsthR69iXQj8QUQ-8; "
-    "SCF=AvkAo2rEkoAXVkmpxbnyxhxF2WvTHTZrYVwxH1S-CmsdU3ZGtAqFDfThQZ8lLc3S67yYleTc-bSewRkv-Qz-7CE.; "
-    "_T_WM=41643702471; "
-    "ALF=1772088739; "
-    "SSOLoginState=1769496739; "
-    "WEIBOCN_FROM=1110006030; "
-    "MLOGIN=1; "
-    "SUBP=0033WrSXqPxfM725Ws9jqgMF55529P9D9WW.wZE0u6EW0W006O-QhbZU5NHD95QN1Kzceh2pS0qNWs4DqcjMi--NiK.Xi-2Ri--ciKnRi-zNS0.ESo5peKMcS7tt"
-)
 
-SLEEP_SEC = 1.0
-TIMEOUT = (10, 30)   # (连接超时, 读取超时)
-MAX_PAGES = 10000
+def stop_before_naive() -> datetime:
+    s = env_str("WEIBO_STOP_BEFORE", "2017-03-01").strip()
+    parts = s.split("-")
+    if len(parts) != 3:
+        raise SystemExit(f"WEIBO_STOP_BEFORE 须为 YYYY-MM-DD，当前为 {s!r}")
+    y, mo, d = int(parts[0]), int(parts[1]), int(parts[2])
+    return datetime(y, mo, d, 0, 0, 0)
 
 # ================== 工具函数 ==================
 def strip_html(s: str) -> str:
@@ -132,10 +125,14 @@ def is_html(resp: requests.Response) -> bool:
 
 # ================== 主流程 ==================
 def main():
+    if not COOKIE.strip():
+        raise SystemExit("请在 .env 中设置 WEIBO_COOKIE（见 .env.example）")
+
     seen = load_seen(OUT)
+    stop_cutoff = stop_before_naive()
 
     session = requests.Session()
-    session.headers.update({
+    hdrs = {
         "User-Agent": UA,
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -143,9 +140,10 @@ def main():
         "Origin": "https://m.weibo.cn",
         "Connection": "keep-alive",
         "Cookie": COOKIE,
-        # 很多站点会校验这个 header 名（不是必须，但有时有用）
-        "X-XSRF-TOKEN": "bef309",
-    })
+    }
+    if M_XSRF:
+        hdrs["X-XSRF-TOKEN"] = M_XSRF
+    session.headers.update(hdrs)
 
     # 先探测一次，禁止自动跳转，避免你再次遇到 passport
     probe = session.get(
@@ -230,11 +228,19 @@ def main():
             "oldest_on_page", oldest_dt.isoformat() if oldest_dt else None
         )
 
-        # 停止条件：翻到 2017-03-01 之前（含更早）
+        # 停止条件：翻到 WEIBO_STOP_BEFORE 当天 0 点之前（不含当天）
         if oldest_dt is not None:
-            stop_point = datetime(2017, 3, 1, 0, 0, 0, tzinfo=oldest_dt.tzinfo)
+            stop_point = datetime(
+                stop_cutoff.year,
+                stop_cutoff.month,
+                stop_cutoff.day,
+                0,
+                0,
+                0,
+                tzinfo=oldest_dt.tzinfo,
+            )
             if oldest_dt < stop_point:
-                print("Reached before 2017-03-01, stop.")
+                print(f"Reached before {stop_cutoff.date()}, stop.")
                 break
 
         if not next_since:

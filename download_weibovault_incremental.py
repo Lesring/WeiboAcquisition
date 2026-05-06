@@ -8,18 +8,19 @@ from typing import Optional, Iterable
 import requests
 from requests.exceptions import ReadTimeout, ConnectTimeout, ChunkedEncodingError, RequestException
 
-# ====== 配置 ======
-JSONL_PATH = Path(r"D:\Projects\python\weibo\weibovault_5635286888_m_pre20170301.jsonl")  # 改成你的
-OUT_DIR = Path(r"D:\lww")  # 输出目录（用 r"..." 或 D:/lww）
+from weibo_env import env_float, env_path, env_str, env_user_agent, http_timeout_pair
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+_UID = env_str("WEIBO_UID", "5635286888")
 
-# 如果下载资源需要登录态，把你能看老微博那套 Cookie 放进来（可先留空）
-COOKIE = r""""""
+# ====== 配置（.env）======
+JSONL_PATH = env_path("WEIBO_JSONL_M_PRE", Path(f"weibovault_{_UID}_m_pre20170301.jsonl"))
+OUT_DIR = env_path("WEIBO_DOWNLOAD_DIR", Path(r"D:\lww"))
 
-SLEEP_SEC = 0.6
-TIMEOUT = (10, 60)   # (连接, 读取)
+UA = env_user_agent()
+COOKIE = env_str("WEIBO_COOKIE")
+
+SLEEP_SEC = env_float("WEIBO_SLEEP_SEC", 0.6)
+TIMEOUT = http_timeout_pair(default_read=60)
 RETRIES = 5
 
 FAILED_LOG = OUT_DIR / "_failed.txt"

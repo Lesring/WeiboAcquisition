@@ -27,18 +27,28 @@ pip install -r requirements.txt
 | `download_weibovault_incremental.py` | 根据 jsonl 增量下载资源（可配置 Cookie） |
 | `download_album_all_images.py` | 相册 API 分页下载相册内全部图片 |
 | `collect_media_by_date.py` | 将已下载目录中的图片/视频按类型汇总到两个目标文件夹 |
+| `weibo_env.py` | 加载项目根目录 `.env`，被各脚本引用 |
 
-各脚本顶部均有 **路径、UID、Cookie、输出目录** 等常量，运行前请按需修改。
+配置项见 **`.env`**（从 `.env.example` 复制：`copy .env.example .env`）。敏感信息只放在 `.env`，该文件已被 Git 忽略。
+
+## 配置（.env）
+
+1. 复制示例：`copy .env.example .env`（Linux/macOS：`cp .env.example .env`）
+2. 在 `.env` 中填写 `WEIBO_COOKIE`、`WEIBO_XSRF_PC`（及按需的 `WEIBO_XSRF_M`）、路径等。
+3. Cookie 若包含 `#` 等字符，建议用双引号包裹整段值，例如：`WEIBO_COOKIE="SUB=...; ..."`
+
+主要变量说明见 `.env.example` 内注释。
 
 ## 使用提示
 
-1. **登录与 Cookie**：多数接口需要浏览器登录后的 Cookie（如 `SUB`、`SUBP` 等）。从开发者工具复制后填入对应脚本的 `COOKIE`（及 `weibopc.py` 中的 `XSRF`）。
-2. **频率**：脚本中已设置 `SLEEP_SEC`、重试等以降低请求压力，请勿改得过激以免触发风控。
-3. **输出**：下载目录、jsonl 文件名在脚本里配置；Windows 路径可用 `r"D:\path"` 或 `Path("D:/path")`。
+1. **登录与 Cookie**：多数接口需要浏览器登录后的 Cookie（如 `SUB`、`SUBP` 等），写入 `.env` 的 `WEIBO_COOKIE`。`weibopc.py` 另需 `WEIBO_XSRF_PC`；`weibom_pre_20170301.py` 可设 `WEIBO_XSRF_M`，不填则回退为 `WEIBO_XSRF_PC`。
+2. **频率**：可通过 `WEIBO_SLEEP_SEC` 调节间隔；也可用各脚本原有默认。
+3. **输出**：`WEIBO_DOWNLOAD_DIR`、`WEIBO_JSONL_PC` 等在 `.env` 中配置；路径支持 `D:\path` 或 `D:/path`。
 
 ## 安全与仓库规范
 
-- **不要**把真实 Cookie 或 token 推到**公开**远程仓库。推送前请清空或改写脚本中的 `COOKIE` / `XSRF`，或使用环境变量（可自行封装）。
+- **不要**把 `.env` 推到远程仓库（已列入 `.gitignore`）。仅提交 `.env.example` 作为模板。
+- **`WEIBO_COOKIE` / XSRF** 只放在本机 `.env`，公开仓库中勿填写真实值。
 - 默认 **`.gitignore` 忽略 `*.jsonl`**，避免误提交大批量个人数据；若需要纳入版本控制，可使用 `git add -f 某文件.jsonl`。
 
 ## 许可证

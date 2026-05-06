@@ -1,29 +1,29 @@
 import json
 import re
 import time
-import time
-import re
 from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
 from requests.exceptions import ReadTimeout, ConnectTimeout, ChunkedEncodingError, RequestException
 
-# ====== 配置 ======
-CONTAINER_ID = "1078035635286888_38555701961531260000005635286888_-_albumeach"
-OUT_DIR = Path(r"D:\weibo_album_images")  # 改成你想要的目录
-START_PAGE = 1
-MAX_PAGES = 5000
-COUNT = 24
+from weibo_env import env_float, env_int, env_path, env_str, env_user_agent, http_timeout_pair
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+# ====== 配置（.env）======
+CONTAINER_ID = env_str(
+    "WEIBO_ALBUM_CONTAINER_ID",
+    "1078035635286888_38555701961531260000005635286888_-_albumeach",
+)
+OUT_DIR = env_path("WEIBO_ALBUM_OUT_DIR", Path(r"D:\weibo_album_images"))
+START_PAGE = env_int("WEIBO_ALBUM_START_PAGE", 1)
+MAX_PAGES = env_int("WEIBO_ALBUM_MAX_PAGES", 5000)
+COUNT = env_int("WEIBO_ALBUM_PAGE_COUNT", 24)
 
-# 用你 m.weibo.cn 能看相册的那套 Cookie（SUB/SUBP/SSOLoginState/ALF/SCF/_T_WM 等）
-COOKIE = r"""SUB=_2A25EfBDzDeRhGeFH6VQR8S_LzTuIHXVn8Cw7rDV6PUJbktANLWfdkW1Ne42WMp4jmnBYkOqLsthR69iXQj8QUQ-8; SUBP=0033WrSXqPxfM725Ws9jqgMF55529P9D9WW.wZE0u6EW0W006O-QhbZU5NHD95QN1Kzceh2pS0qNWs4DqcjMi--NiK.Xi-2Ri--ciKnRi-zNS0.ESo5peKMcS7tt; SSOLoginState=1769496739; ALF=1772088739; SCF=AvkAo2rEkoAXVkmpxbnyxhxF2WvTHTZrYVwxH1S-CmsdU3ZGtAqFDfThQZ8lLc3S67yYleTc-bSewRkv-Qz-7CE; _T_WM=41643702471; MLOGIN=1; WEIBOCN_FROM=1110006030"""
+UA = env_user_agent()
+COOKIE = env_str("WEIBO_COOKIE")
 
-SLEEP_SEC = 0.8
-TIMEOUT = (10, 30)
+SLEEP_SEC = env_float("WEIBO_SLEEP_SEC", 0.8)
+TIMEOUT = http_timeout_pair(default_read=30)
 RETRIES = 5
 
 API = "https://m.weibo.cn/api/container/getSecond"
@@ -129,6 +129,9 @@ def fetch_page(session: requests.Session, page: int) -> dict:
 
 
 def main():
+    if not COOKIE.strip():
+        raise SystemExit("请在 .env 中设置 WEIBO_COOKIE（见 .env.example）")
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     session = requests.Session()
