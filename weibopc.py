@@ -4,12 +4,6 @@ import requests
 
 from weibo_env import env_path, env_str, env_user_agent
 
-UID = env_str("WEIBO_UID", "5635286888")
-OUT = env_path("WEIBO_JSONL_PC", Path(f"weibovault_{UID}_pc.jsonl"))
-
-UA = env_user_agent()
-COOKIE = env_str("WEIBO_COOKIE")
-XSRF = env_str("WEIBO_XSRF_PC")
 
 def strip_html(s: str) -> str:
     s = s or ""
@@ -17,23 +11,15 @@ def strip_html(s: str) -> str:
     s = re.sub(r"<.*?>", "", s)
     return s.replace("&nbsp;", " ").replace("&amp;", "&").strip()
 
-def extract_pics(mblog: dict):
-    """
-    PC ajax/statuses/mymblog 常见结构：
-    - pic_ids: ["xxxx", "yyyy", ...]
-    - pic_infos: { "xxxx": {...}, "yyyy": {...} }
-    每个 info 里可能有 largest/original/large 等 url
-    """
-    out = []
 
-    # 1) 主路径：pic_infos + pic_ids
+def extract_pics(mblog: dict):
+    out = []
     pic_infos = mblog.get("pic_infos") or {}
     pic_ids = mblog.get("pic_ids") or []
 
     if isinstance(pic_ids, list) and isinstance(pic_infos, dict) and pic_infos:
         for pid in pic_ids:
             info = pic_infos.get(pid) or {}
-            # 优先取更大图
             for key in ["largest", "original", "large", "mw2000", "bmiddle", "thumbnail"]:
                 v = info.get(key) or {}
                 url = v.get("url") if isinstance(v, dict) else None
@@ -41,7 +27,6 @@ def extract_pics(mblog: dict):
                     out.append(url)
                     break
 
-    # 2) 兼容路径：少数情况下存在 pics 数组
     if not out:
         for p in (mblog.get("pics") or []):
             url = ((p.get("large") or {}).get("url") or
@@ -50,13 +35,13 @@ def extract_pics(mblog: dict):
             if url:
                 out.append(url)
 
-    # 去重保持顺序
     dedup, seen = [], set()
     for u in out:
         if u not in seen:
             seen.add(u)
             dedup.append(u)
     return dedup
+
 
 def extract_videos(mblog: dict):
     videos = []
@@ -73,7 +58,6 @@ def extract_videos(mblog: dict):
         if isinstance(v, str) and v:
             videos.append(v)
 
-    # 去重
     out, seen = [], set()
     for v in videos:
         if v not in seen:
@@ -81,41 +65,53 @@ def extract_videos(mblog: dict):
             out.append(v)
     return out
 
-def load_seen():
+
+def load_seen(out: Path):
     seen = set()
-    if OUT.exists():
-        for line in OUT.open("r", encoding="utf-8"):
+    if out.exists():
+        for line in out.open("r", encoding="utf-8"):
             try:
                 obj = json.loads(line)
                 mid = str(obj.get("mid") or "")
                 if mid:
                     seen.add(mid)
-            except:
+            except Exception:
                 pass
     return seen
 
+
 def main():
-    if not COOKIE.strip():
+    from weibo_bootstrap import ensure_job_env
+
+    ensure_job_env()
+
+    uid = env_str("WEIBO_UID")
+    out = env_path("WEIBO_JSONL_PC", Path(f"weibovault_{uid}_pc.jsonl"))
+    ua = env_user_agent()
+    cookie = env_str("WEIBO_COOKIE")
+    xsrf = env_str("WEIBO_XSRF_PC")
+
+    if not cookie.strip():
         raise SystemExit("请在 .env 中设置 WEIBO_COOKIE（见 .env.example）")
-    if not XSRF.strip():
+    if not xsrf.strip():
         raise SystemExit("请在 .env 中设置 WEIBO_XSRF_PC（见 .env.example）")
 
-    seen = load_seen()
+    seen = load_seen(out)
 
     s = requests.Session()
     s.headers.update({
-        "User-Agent": UA,
+        "User-Agent": ua,
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9",
-        "Referer": f"https://weibo.com/u/{UID}",
-        "Cookie": COOKIE,
-        "X-XSRF-TOKEN": XSRF,
+        "Referer": f"https://weibo.com/u/{uid}",
+        "Cookie": cookie,
+        "X-XSRF-TOKEN": xsrf,
         "Connection": "keep-alive",
     })
 
     page = 1
     for _ in range(2000):
-        url = f"https://weibo.com/ajax/statuses/mymblog?uid={UID}&page={page}&feature=0"
+        url = f"https://weibo.com/ajax/statuses/mymblog?uid={uid}&page={page}&feature=0"
         r = s.get(url, timeout=20)
         ct = (r.headers.get("content-type") or "").lower()
 
@@ -131,7 +127,7 @@ def main():
             break
 
         new_cnt = 0
-        with OUT.open("a", encoding="utf-8") as f:
+        with out.open("a", encoding="utf-8") as f:
             for m in lst:
                 mid = str(m.get("mid") or m.get("id") or "")
                 if not mid or mid in seen:
@@ -153,6 +149,9 @@ def main():
 
         page += 1
         time.sleep(1.0)
+
+    print("写入:", out.resolve())
+
 
 if __name__ == "__main__":
     main()

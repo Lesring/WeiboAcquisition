@@ -1,24 +1,17 @@
 import re
 import shutil
+import os
 from pathlib import Path
 
 from weibo_env import env_path
 
-# ====== 配置（.env）======
-SRC_ROOT = env_path("WEIBO_COLLECT_SRC", Path(r"D:\lww"))
-DST_IMAGES = env_path("WEIBO_COLLECT_DST_IMAGES", Path(r"D:\lww_collect\images"))
-DST_VIDEOS = env_path("WEIBO_COLLECT_DST_VIDEOS", Path(r"D:\lww_collect\videos"))
 
-# ====== 可选：只处理这些后缀 ======
 IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 VID_EXT = {".mp4", ".mov", ".m4v"}
-
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+
 def safe_copy(src: Path, dst: Path) -> Path:
-    """
-    复制到 dst；如果同名已存在，则自动加 _02 / _03 ...
-    """
     dst.parent.mkdir(parents=True, exist_ok=True)
     if not dst.exists():
         shutil.copy2(src, dst)
@@ -31,23 +24,30 @@ def safe_copy(src: Path, dst: Path) -> Path:
             return cand
     raise RuntimeError(f"Too many duplicates for {dst.name}")
 
-def main():
-    if not SRC_ROOT.exists():
-        raise FileNotFoundError(SRC_ROOT)
 
-    DST_IMAGES.mkdir(parents=True, exist_ok=True)
-    DST_VIDEOS.mkdir(parents=True, exist_ok=True)
+def main():
+    from weibo_bootstrap import ensure_job_env
+
+    ensure_job_env(allow_missing_target=True)
+    media_base = Path(os.environ.get("WEIBO_DOWNLOAD_DIR", "media")).expanduser()
+    src_root = env_path("WEIBO_COLLECT_SRC", media_base)
+    dst_images = env_path("WEIBO_COLLECT_DST_IMAGES", media_base.parent / "collected" / "images")
+    dst_videos = env_path("WEIBO_COLLECT_DST_VIDEOS", media_base.parent / "collected" / "videos")
+
+    if not src_root.exists():
+        raise FileNotFoundError(src_root)
+
+    dst_images.mkdir(parents=True, exist_ok=True)
+    dst_videos.mkdir(parents=True, exist_ok=True)
 
     img_count = 0
     vid_count = 0
 
-    # 遍历：SRC_ROOT / YYYY-MM-DD / mid / images|videos / files
-    for date_dir in SRC_ROOT.iterdir():
+    for date_dir in src_root.iterdir():
         if not date_dir.is_dir():
             continue
         date_str = date_dir.name
         if not DATE_RE.match(date_str):
-            # 跳过 _failed.txt 等非日期目录
             continue
 
         for mid_dir in date_dir.iterdir():
@@ -55,7 +55,6 @@ def main():
                 continue
             mid = mid_dir.name
 
-            # 图片
             images_dir = mid_dir / "images"
             if images_dir.exists():
                 files = sorted([p for p in images_dir.iterdir() if p.is_file()])
@@ -66,10 +65,9 @@ def main():
                         continue
                     seq += 1
                     new_name = f"{date_str}_{mid}_img{seq:03d}{ext}"
-                    safe_copy(f, DST_IMAGES / new_name)
+                    safe_copy(f, dst_images / new_name)
                     img_count += 1
 
-            # 视频
             videos_dir = mid_dir / "videos"
             if videos_dir.exists():
                 files = sorted([p for p in videos_dir.iterdir() if p.is_file()])
@@ -80,12 +78,13 @@ def main():
                         continue
                     seq += 1
                     new_name = f"{date_str}_{mid}_vid{seq:03d}{ext}"
-                    safe_copy(f, DST_VIDEOS / new_name)
+                    safe_copy(f, dst_videos / new_name)
                     vid_count += 1
 
     print("DONE")
-    print("images:", img_count, "=>", str(DST_IMAGES))
-    print("videos:", vid_count, "=>", str(DST_VIDEOS))
+    print("images:", img_count, "=>", str(dst_images))
+    print("videos:", vid_count, "=>", str(dst_videos))
+
 
 if __name__ == "__main__":
     main()

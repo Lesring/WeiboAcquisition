@@ -1,6 +1,6 @@
-import json
 import re
 import time
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -9,25 +9,7 @@ from requests.exceptions import ReadTimeout, ConnectTimeout, ChunkedEncodingErro
 
 from weibo_env import env_float, env_int, env_path, env_str, env_user_agent, http_timeout_pair
 
-# ====== 配置（.env）======
-CONTAINER_ID = env_str(
-    "WEIBO_ALBUM_CONTAINER_ID",
-    "1078035635286888_38555701961531260000005635286888_-_albumeach",
-)
-OUT_DIR = env_path("WEIBO_ALBUM_OUT_DIR", Path(r"D:\weibo_album_images"))
-START_PAGE = env_int("WEIBO_ALBUM_START_PAGE", 1)
-MAX_PAGES = env_int("WEIBO_ALBUM_MAX_PAGES", 5000)
-COUNT = env_int("WEIBO_ALBUM_PAGE_COUNT", 24)
-
-UA = env_user_agent()
-COOKIE = env_str("WEIBO_COOKIE")
-
-SLEEP_SEC = env_float("WEIBO_SLEEP_SEC", 0.8)
-TIMEOUT = http_timeout_pair(default_read=30)
-RETRIES = 5
-
 API = "https://m.weibo.cn/api/container/getSecond"
-
 IMG_EXT_ALLOW = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
@@ -60,7 +42,6 @@ def collect_image_urls(obj, out_set: set):
     if obj is None:
         return
     if isinstance(obj, dict):
-        # 结构化字段：largest/original/large/url
         for key in ("largest", "original", "large", "mw2000", "bmiddle", "thumbnail"):
             v = obj.get(key)
             if isinstance(v, dict) and isinstance(v.get("url"), str):
@@ -81,7 +62,13 @@ def collect_image_urls(obj, out_set: set):
             collect_image_urls(it, out_set)
 
 
-def download_file(session: requests.Session, url: str, dest: Path) -> bool:
+def download_file(
+    session: requests.Session,
+    url: str,
+    dest: Path,
+    timeout: tuple[int, int],
+    retries: int,
+) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.stat().st_size > 0:
         return True
@@ -92,9 +79,9 @@ def download_file(session: requests.Session, url: str, dest: Path) -> bool:
     if downloaded > 0:
         headers["Range"] = f"bytes={downloaded}-"
 
-    for i in range(RETRIES):
+    for i in range(retries):
         try:
-            with session.get(url, stream=True, timeout=TIMEOUT, headers=headers) as r:
+            with session.get(url, stream=True, timeout=timeout, headers=headers) as r:
                 if r.status_code not in (200, 206):
                     return False
                 mode = "ab" if r.status_code == 206 else "wb"
@@ -114,11 +101,17 @@ def download_file(session: requests.Session, url: str, dest: Path) -> bool:
     return False
 
 
-def fetch_page(session: requests.Session, page: int) -> dict:
+def fetch_page(
+    session: requests.Session,
+    container_id: str,
+    page: int,
+    count: int,
+    timeout: tuple[int, int],
+) -> dict:
     r = session.get(
         API,
-        params={"containerid": CONTAINER_ID, "page": page, "count": COUNT},
-        timeout=TIMEOUT,
+        params={"containerid": container_id, "page": page, "count": count},
+        timeout=timeout,
         allow_redirects=False,
     )
     if r.status_code in (301, 302, 303, 307, 308):
@@ -129,27 +122,51 @@ def fetch_page(session: requests.Session, page: int) -> dict:
 
 
 def main():
-    if not COOKIE.strip():
-        raise SystemExit("请在 .env 中设置 WEIBO_COOKIE（见 .env.example）")
+    from weibo_bootstrap import ensure_job_env
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    uid_or_none = ensure_job_env(allow_missing_target=True)
+    if uid_or_none is None:
+        root = Path(os.environ.get("WEIBO_DATA_ROOT", "data")).expanduser()
+        os.environ.setdefault("WEIBO_ALBUM_OUT_DIR", str(root / "album"))
+        Path(os.environ["WEIBO_ALBUM_OUT_DIR"]).mkdir(parents=True, exist_ok=True)
+
+    container_id = env_str("WEIBO_ALBUM_CONTAINER_ID", "").strip()
+    if not container_id:
+        raise SystemExit(
+            "请设置 WEIBO_ALBUM_CONTAINER_ID（相册接口 containerid，需从浏览器抓包），"
+            "或使用 run_weibo.py album --container-id <id>"
+        )
+
+    out_dir = env_path("WEIBO_ALBUM_OUT_DIR", Path("album"))
+    start_page = env_int("WEIBO_ALBUM_START_PAGE", 1)
+    max_pages = env_int("WEIBO_ALBUM_MAX_PAGES", 5000)
+    count = env_int("WEIBO_ALBUM_PAGE_COUNT", 24)
+    ua = env_user_agent()
+    cookie = env_str("WEIBO_COOKIE")
+    sleep_sec = env_float("WEIBO_SLEEP_SEC", 0.8)
+    timeout = http_timeout_pair(default_read=30)
+    retries = 5
+
+    if not cookie.strip():
+        raise SystemExit("请在 .env 中设置 WEIBO_COOKIE（相册接口通常需要登录态）")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     session = requests.Session()
     session.headers.update({
-        "User-Agent": UA,
+        "User-Agent": ua,
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Referer": "https://m.weibo.cn/",
         "Origin": "https://m.weibo.cn",
         "Connection": "keep-alive",
-        "Cookie": COOKIE,
+        "Cookie": cookie,
     })
 
     all_urls = set()
 
-    # 拉取所有页
-    for page in range(START_PAGE, MAX_PAGES + 1):
-        data = fetch_page(session, page)
+    for page in range(start_page, max_pages + 1):
+        data = fetch_page(session, container_id, page, count, timeout)
         ok = data.get("ok")
         if ok != 1:
             print("page", page, "ok!=1:", data.get("msg") or "")
@@ -160,12 +177,11 @@ def main():
         new = len(all_urls) - before
         print("page", page, "new_urls", new, "total", len(all_urls))
 
-        if new == 0 and page > START_PAGE:
+        if new == 0 and page > start_page:
             break
 
-        time.sleep(SLEEP_SEC)
+        time.sleep(sleep_sec)
 
-    # 下载（按序号命名，不重复：文件存在直接跳过）
     urls = sorted(all_urls)
     dl = skip = fail = 0
 
@@ -174,13 +190,13 @@ def main():
         ext = guess_ext(url)
         if ext not in IMG_EXT_ALLOW:
             ext = ".jpg"
-        dest = OUT_DIR / f"{i:06d}{ext}"
+        dest = out_dir / f"{i:06d}{ext}"
 
         if dest.exists() and dest.stat().st_size > 0:
             skip += 1
             continue
 
-        if download_file(session, url, dest):
+        if download_file(session, url, dest, timeout, retries):
             dl += 1
         else:
             fail += 1
@@ -191,7 +207,7 @@ def main():
         time.sleep(0.2)
 
     print("DONE", "total_urls", len(urls), "downloaded", dl, "skipped", skip, "failed", fail)
-    print("OUT_DIR:", str(OUT_DIR))
+    print("OUT_DIR:", str(out_dir.resolve()))
 
 
 if __name__ == "__main__":

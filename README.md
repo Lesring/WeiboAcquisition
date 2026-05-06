@@ -1,56 +1,109 @@
-# Weibo 备份与下载工具
+# 微博备份工具
 
-一组用于从微博 **m.weibo.cn / weibo.com** 拉取时间线、导出为 **JSON Lines（`.jsonl`）**，并按需下载图片/视频的 Python 脚本。适用于个人备份与学习，请遵守微博服务条款与当地法律法规。
+从 **m.weibo.cn / weibo.com** 抓取个人微博时间线（JSON Lines）、按需下载图片/视频，并支持相册分页下载。适用于**任意用户**：只需提供**个人主页 URL（含数字 UID）或纯数字 UID**，数据会按用户隔离存放。
 
-## 环境要求
+请遵守微博服务条款与当地法律法规，仅限个人备份与学习使用。
 
-- Python 3.10+（建议 3.11）
-- 依赖见 `requirements.txt`
+## 环境
 
-## 安装
+- Python 3.10+
+- `pip install -r requirements.txt`
 
 ```bash
 cd d:\Projects\python\weibo
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
+# 编辑 .env：至少填写 WEIBO_TARGET 或 WEIBO_UID，按需填写 WEIBO_COOKIE、WEIBO_XSRF_PC 等
 ```
 
-## 脚本说明
+## 核心用法：`run_weibo.py`（推荐）
+
+统一入口：**先指定要备份的用户**，再选子命令。用户可从 URL 解析（`/u/数字`）或直接使用数字 UID。
+
+```text
+python run_weibo.py -t <主页URL或UID> [--data-root 导出根目录] <子命令>
+```
+
+- **`-t` / `--target`**：例如 `https://weibo.com/u/1234567890`、`https://m.weibo.cn/u/1234567890` 或 `1234567890`。也可只在 `.env` 里配置 `WEIBO_TARGET` 或 `WEIBO_UID`，则命令行可省略 `-t`（`album` 子命令除外说明见下）。
+- **`--data-root`**：数据根目录，默认 `./data`（或 `.env` 中 `WEIBO_DATA_ROOT`）。每个用户独占子目录：**`<data-root>/<UID>/`**.
+
+### 子命令一览
+
+| 子命令 | 作用 |
+|--------|------|
+| `crawl-mobile` | m 站当前时间线 → `timeline_mobile.jsonl` |
+| `crawl-pc` | PC 接口时间线 → `timeline_pc.jsonl`（需 `WEIBO_COOKIE` + `WEIBO_XSRF_PC`） |
+| `crawl-m-pre` | m 站向前翻页，直到早于 `WEIBO_STOP_BEFORE` → `timeline_m_pre20170301.jsonl` |
+| `download-pc` | 根据 PC 的 jsonl 下载图文视频到 `media/` |
+| `download-m-pre` | 根据 m_pre 的 jsonl **增量**下载到 `media/`（`.done` 标记） |
+| `album` | 相册图片分页下载到 `album/`（需 `WEIBO_ALBUM_CONTAINER_ID` 或 `--container-id`） |
+| `collect` | 将 `media/` 下按日期的目录扁平汇总到 `collected/images`、`collected/videos` |
+| `pipeline-pc` | 依次：`crawl-pc` → `download-pc` |
+| `pipeline-m-pre` | 依次：`crawl-m-pre` → `download-m-pre` |
+
+### 示例
+
+```bash
+# PC 一条龙：抓时间线 + 下载媒体（需在 .env 配置 Cookie / XSRF）
+python run_weibo.py -t https://weibo.com/u/1234567890 pipeline-pc
+
+# 仅 m 站当前时间线
+python run_weibo.py -t 1234567890 crawl-mobile
+
+# 指定导出目录
+python run_weibo.py --data-root D:/weibo_backup -t https://m.weibo.cn/u/123 crawl-m-pre
+
+# 相册（containerid 需自行抓包；可与 -t 同用以把相册存进该 UID 目录）
+python run_weibo.py -t 1234567890 album --container-id "107803..._-_albumeach"
+```
+
+### 每个 UID 下默认目录结构
+
+在 `<WEIBO_DATA_ROOT>/<UID>/` 中：
+
+- `timeline_mobile.jsonl`、`timeline_pc.jsonl`、`timeline_m_pre20170301.jsonl`
+- `media/`：按 `YYYY-MM-DD/<mid>/images|videos` 存放下载结果
+- `album/`：相册图片
+- `collected/images`、`collected/videos`：`collect` 的输出
+
+若在 `.env` 中单独设置了 `WEIBO_JSONL_*`、`WEIBO_DOWNLOAD_DIR` 等，**未设置的项**仍按上表自动填充；已设置的项以 `.env` 为准（`setdefault` 行为）。
+
+### `album` 与主页 URL
+
+相册接口的 **containerid** 不能从普通个人主页 URL 自动推导，需从浏览器开发者工具抓包得到。若**不传** `-t` / 不设 `WEIBO_TARGET`亦可运行相册：图片会写入 **`WEIBO_DATA_ROOT/album/`**（默认 `./data/album`），并仍须在 `.env` 或 `--container-id` 提供相册 id。
+
+## 关于 `.env` 与 `downloadweibopc.py` 里的 UID
+
+`env_str("WEIBO_UID", "5635286888")` 这类写法中，**第二个参数只是“环境变量未设置时的占位默认”**；真正从 `.env` 读取的是 **`WEIBO_TARGET` / `WEIBO_UID`**（或由 `run_weibo.py -t` 写入的 `WEIBO_TARGET`）。  
+当前流程中，各脚本在 `main()` 里会先执行 `ensure_job_env()`，根据目标解析出 **`WEIBO_UID`** 并补全路径，因此请**优先在 `.env` 配置 `WEIBO_TARGET`**，或始终通过 `run_weibo.py -t ...` 指定用户。
+
+## 单独运行各脚本（高级）
+
+仍可直接 `python weibopc.py` 等：脚本会在 `main()` 调用 `weibo_bootstrap.ensure_job_env()`。请保证 `.env` 里已有 **`WEIBO_TARGET` 或 `WEIBO_UID`**（与命令行 `-t` 二选一即可）。
+
+## 仓库内文件说明
 
 | 文件 | 作用 |
 |------|------|
-| `WeiboVault.py` | 移动端时间线抓取，写入 `weibovault_{uid}.jsonl` |
-| `weibom_pre_20170301.py` | 按截止时间抓取较早微博（m 站），输出带 `_m_pre20170301` 后缀的 jsonl |
-| `weibopc.py` | PC 端接口抓取个人微博列表，输出 `weibovault_{uid}_pc.jsonl` |
-| `downloadweibopc.py` | 根据 PC 端 jsonl 下载媒体，按日期分子目录 |
-| `download_weibovault_incremental.py` | 根据 jsonl 增量下载资源（可配置 Cookie） |
-| `download_album_all_images.py` | 相册 API 分页下载相册内全部图片 |
-| `collect_media_by_date.py` | 将已下载目录中的图片/视频按类型汇总到两个目标文件夹 |
-| `weibo_env.py` | 加载项目根目录 `.env`，被各脚本引用 |
+| `run_weibo.py` | **推荐入口**：解析 `-t`、设置路径、调度子命令与流水线 |
+| `weibo_target.py` | 从 URL 或纯数字解析 UID |
+| `weibo_bootstrap.py` | 加载 `.env`，解析目标，`setdefault` 各路径环境变量 |
+| `weibo_env.py` | `python-dotenv` 与 `env_str` / `env_path` 等工具 |
+| `WeiboVault.py` | m 站「当前」时间线抓取 |
+| `weibopc.py` | PC 端时间线抓取 |
+| `weibom_pre_20170301.py` | m 站向前翻到 `WEIBO_STOP_BEFORE` 之前 |
+| `downloadweibopc.py` | 按 PC jsonl 下载媒体 |
+| `download_weibovault_incremental.py` | 按 m_pre jsonl 增量下载 |
+| `download_album_all_images.py` | 相册分页下载 |
+| `collect_media_by_date.py` | 汇总 `media/` 到扁平目录 |
 
-配置项见 **`.env`**（从 `.env.example` 复制：`copy .env.example .env`）。敏感信息只放在 `.env`，该文件已被 Git 忽略。
+## 安全说明
 
-## 配置（.env）
+- **勿**将 `.env`、真实 Cookie、token 推送到公开仓库。
+- 默认 `.gitignore` 包含 `.env` 与 `*.jsonl`。
 
-1. 复制示例：`copy .env.example .env`（Linux/macOS：`cp .env.example .env`）
-2. 在 `.env` 中填写 `WEIBO_COOKIE`、`WEIBO_XSRF_PC`（及按需的 `WEIBO_XSRF_M`）、路径等。
-3. Cookie 若包含 `#` 等字符，建议用双引号包裹整段值，例如：`WEIBO_COOKIE="SUB=...; ..."`
+## 许可
 
-主要变量说明见 `.env.example` 内注释。
-
-## 使用提示
-
-1. **登录与 Cookie**：多数接口需要浏览器登录后的 Cookie（如 `SUB`、`SUBP` 等），写入 `.env` 的 `WEIBO_COOKIE`。`weibopc.py` 另需 `WEIBO_XSRF_PC`；`weibom_pre_20170301.py` 可设 `WEIBO_XSRF_M`，不填则回退为 `WEIBO_XSRF_PC`。
-2. **频率**：可通过 `WEIBO_SLEEP_SEC` 调节间隔；也可用各脚本原有默认。
-3. **输出**：`WEIBO_DOWNLOAD_DIR`、`WEIBO_JSONL_PC` 等在 `.env` 中配置；路径支持 `D:\path` 或 `D:/path`。
-
-## 安全与仓库规范
-
-- **不要**把 `.env` 推到远程仓库（已列入 `.gitignore`）。仅提交 `.env.example` 作为模板。
-- **`WEIBO_COOKIE` / XSRF** 只放在本机 `.env`，公开仓库中勿填写真实值。
-- 默认 **`.gitignore` 忽略 `*.jsonl`**，避免误提交大批量个人数据；若需要纳入版本控制，可使用 `git add -f 某文件.jsonl`。
-
-## 许可证
-
-脚本为个人工具性质，使用与分发责任由使用者自行承担。
+个人工具性质；使用与分发责任自负。

@@ -3,37 +3,22 @@ import re
 import time
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Iterable
+from typing import Iterable
 
 import requests
 from requests.exceptions import ReadTimeout, ConnectTimeout, ChunkedEncodingError, RequestException
 
 from weibo_env import env_float, env_path, env_str, env_user_agent, http_timeout_pair
 
-_UID = env_str("WEIBO_UID", "5635286888")
 
-# ====== 配置（.env）======
-JSONL_PATH = env_path("WEIBO_JSONL_M_PRE", Path(f"weibovault_{_UID}_m_pre20170301.jsonl"))
-OUT_DIR = env_path("WEIBO_DOWNLOAD_DIR", Path(r"D:\lww"))
-
-UA = env_user_agent()
-COOKIE = env_str("WEIBO_COOKIE")
-
-SLEEP_SEC = env_float("WEIBO_SLEEP_SEC", 0.6)
-TIMEOUT = http_timeout_pair(default_read=60)
-RETRIES = 5
-
-FAILED_LOG = OUT_DIR / "_failed.txt"
-
-# ====== 工具函数 ======
 def safe_name(s: str) -> str:
     s = s or ""
     s = re.sub(r'[\\/:*?"<>|]+', "_", s)
     s = s.strip()
     return s[:200] if len(s) > 200 else s
 
+
 def parse_date_folder(time_str: str) -> str:
-    # "Thu Mar 01 16:21:38 +0800 2018" -> "2018-03-01"
     if not time_str:
         return "unknown_date"
     try:
@@ -41,6 +26,7 @@ def parse_date_folder(time_str: str) -> str:
         return dt.strftime("%Y-%m-%d")
     except Exception:
         return "unknown_date"
+
 
 def guess_ext(url: str, fallback: str) -> str:
     if not url:
@@ -52,10 +38,12 @@ def guess_ext(url: str, fallback: str) -> str:
             return ext
     return fallback
 
-def log_failed(kind: str, mid: str, url: str, dest: Path, reason: str):
-    FAILED_LOG.parent.mkdir(parents=True, exist_ok=True)
-    with FAILED_LOG.open("a", encoding="utf-8") as f:
+
+def log_failed(failed_log: Path, kind: str, mid: str, url: str, dest: Path, reason: str):
+    failed_log.parent.mkdir(parents=True, exist_ok=True)
+    with failed_log.open("a", encoding="utf-8") as f:
         f.write(f"{kind}\t{mid}\t{dest}\t{url}\t{reason}\n")
+
 
 def read_jsonl(path: Path) -> Iterable[dict]:
     with path.open("r", encoding="utf-8") as f:
@@ -65,12 +53,14 @@ def read_jsonl(path: Path) -> Iterable[dict]:
                 continue
             yield json.loads(line)
 
-def download_file(session: requests.Session, url: str, dest: Path) -> tuple[bool, str]:
-    """
-    断点续传 + 不重复：
-    - dest 已存在且 >0，直接返回成功
-    - 否则写到 dest.part，成功后替换
-    """
+
+def download_file(
+    session: requests.Session,
+    url: str,
+    dest: Path,
+    timeout: tuple[int, int],
+    retries: int,
+) -> tuple[bool, str]:
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     if dest.exists() and dest.stat().st_size > 0:
@@ -83,9 +73,9 @@ def download_file(session: requests.Session, url: str, dest: Path) -> tuple[bool
     if downloaded > 0:
         headers["Range"] = f"bytes={downloaded}-"
 
-    for i in range(RETRIES):
+    for i in range(retries):
         try:
-            with session.get(url, stream=True, timeout=TIMEOUT, headers=headers) as r:
+            with session.get(url, stream=True, timeout=timeout, headers=headers) as r:
                 if r.status_code not in (200, 206):
                     return False, f"http_{r.status_code}"
 
@@ -103,36 +93,51 @@ def download_file(session: requests.Session, url: str, dest: Path) -> tuple[bool
                 return True, "ok"
             return False, "empty"
 
-        except (ReadTimeout, ConnectTimeout, TimeoutError, ChunkedEncodingError) as e:
+        except (ReadTimeout, ConnectTimeout, TimeoutError, ChunkedEncodingError):
             time.sleep(1.0 + i)
             continue
-        except RequestException as e:
+        except RequestException:
             time.sleep(1.0 + i)
             continue
-        except Exception as e:
+        except Exception:
             time.sleep(1.0 + i)
             continue
 
     return False, "retry_exhausted"
 
-def main():
-    if not JSONL_PATH.exists():
-        raise FileNotFoundError(JSONL_PATH)
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+def main():
+    from weibo_bootstrap import ensure_job_env
+
+    ensure_job_env()
+
+    uid = env_str("WEIBO_UID")
+    jsonl_path = env_path("WEIBO_JSONL_M_PRE", Path(f"weibovault_{uid}_m_pre20170301.jsonl"))
+    out_dir = env_path("WEIBO_DOWNLOAD_DIR", Path("media"))
+    ua = env_user_agent()
+    cookie = env_str("WEIBO_COOKIE")
+    sleep_sec = env_float("WEIBO_SLEEP_SEC", 0.6)
+    timeout = http_timeout_pair(default_read=60)
+    retries = 5
+    failed_log = out_dir / "_failed.txt"
+
+    if not jsonl_path.exists():
+        raise FileNotFoundError(f"找不到 {jsonl_path.resolve()}，请先 crawl-m-pre 或检查 WEIBO_JSONL_M_PRE")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     s = requests.Session()
     s.headers.update({
-        "User-Agent": UA,
+        "User-Agent": ua,
         "Accept": "*/*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Referer": "https://m.weibo.cn/",
         "Connection": "keep-alive",
     })
-    if COOKIE.strip():
-        s.headers["Cookie"] = COOKIE
+    if cookie.strip():
+        s.headers["Cookie"] = cookie
 
-    posts = list(read_jsonl(JSONL_PATH))
+    posts = list(read_jsonl(jsonl_path))
 
     done_posts = 0
     skip_posts = 0
@@ -145,10 +150,9 @@ def main():
             continue
 
         date_folder = parse_date_folder(post.get("time") or "")
-        post_dir = OUT_DIR / date_folder / safe_name(mid)
+        post_dir = out_dir / date_folder / safe_name(mid)
         done_flag = post_dir / ".done"
 
-        # 规则：如果存在 .done，直接跳过整条微博（增量下载不重复）
         if done_flag.exists():
             skip_posts += 1
             continue
@@ -157,43 +161,39 @@ def main():
         videos_dir = post_dir / "videos"
         post_dir.mkdir(parents=True, exist_ok=True)
 
-        # 保存文案与元信息（每次覆盖，保证最新）
         (post_dir / "post.txt").write_text(post.get("text") or "", encoding="utf-8")
         (post_dir / "meta.json").write_text(
             json.dumps(
                 {"mid": mid, "time": post.get("time"), "pics": post.get("pics") or [], "videos": post.get("videos") or []},
-                ensure_ascii=False, indent=2
+                ensure_ascii=False, indent=2,
             ),
-            encoding="utf-8"
+            encoding="utf-8",
         )
 
-        # 下载图片（文件存在就不重复）
         pics = post.get("pics") or []
         for j, url in enumerate(pics, start=1):
             ext = guess_ext(url, "jpg")
             dest = images_dir / f"{j:03d}.{ext}"
-            ok, reason = download_file(s, url, dest)
+            ok, reason = download_file(s, url, dest, timeout, retries)
             if ok:
                 img_ok += 1
             else:
                 img_fail += 1
-                log_failed("img", mid, url, dest, reason)
-            time.sleep(SLEEP_SEC)
+                log_failed(failed_log, "img", mid, url, dest, reason)
+            time.sleep(sleep_sec)
 
-        # 下载视频
         videos = post.get("videos") or []
         for j, url in enumerate(videos, start=1):
             ext = guess_ext(url, "mp4")
             dest = videos_dir / f"{j:03d}.{ext}"
-            ok, reason = download_file(s, url, dest)
+            ok, reason = download_file(s, url, dest, timeout, retries)
             if ok:
                 vid_ok += 1
             else:
                 vid_fail += 1
-                log_failed("vid", mid, url, dest, reason)
-            time.sleep(SLEEP_SEC)
+                log_failed(failed_log, "vid", mid, url, dest, reason)
+            time.sleep(sleep_sec)
 
-        # 处理完成标记：只有当图片/视频都尝试过后才写 done
         done_flag.write_text("ok\n", encoding="utf-8")
         done_posts += 1
 
@@ -204,7 +204,9 @@ def main():
     print(f"posts_total={len(posts)} done={done_posts} skipped={skip_posts}")
     print(f"images ok={img_ok} fail={img_fail}")
     print(f"videos ok={vid_ok} fail={vid_fail}")
-    print(f"failed_log={FAILED_LOG}")
+    print(f"failed_log={failed_log.resolve()}")
+    print("输出目录:", out_dir.resolve())
+
 
 if __name__ == "__main__":
     main()
