@@ -1,4 +1,4 @@
-# 微博备份工具
+# 个人微博内容批量保存工具
 
 从 **m.weibo.cn / weibo.com** 抓取个人微博时间线（JSON Lines）、按需下载图片/视频，并支持相册分页下载。适用于**任意用户**：只需提供**个人主页 URL（含数字 UID）或纯数字 UID**，数据会按用户隔离存放。
 
@@ -10,7 +10,6 @@
 - `pip install -r requirements.txt`
 
 ```bash
-cd d:\Projects\python\weibo
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
@@ -76,7 +75,7 @@ python run_weibo.py -t 1234567890 album --container-id "107803..._-_albumeach"
 
 ## 关于 `.env` 与 `downloadweibopc.py` 里的 UID
 
-`env_str("WEIBO_UID", "5635286888")` 这类写法中，**第二个参数只是“环境变量未设置时的占位默认”**；真正从 `.env` 读取的是 **`WEIBO_TARGET` / `WEIBO_UID`**（或由 `run_weibo.py -t` 写入的 `WEIBO_TARGET`）。  
+`env_str("WEIBO_UID", "8888888888")` 这类写法中，**第二个参数只是“环境变量未设置时的占位默认”**；真正从 `.env` 读取的是 **`WEIBO_TARGET` / `WEIBO_UID`**（或由 `run_weibo.py -t` 写入的 `WEIBO_TARGET`）。  
 当前流程中，各脚本在 `main()` 里会先执行 `ensure_job_env()`，根据目标解析出 **`WEIBO_UID`** 并补全路径，因此请**优先在 `.env` 配置 `WEIBO_TARGET`**，或始终通过 `run_weibo.py -t ...` 指定用户。
 
 ## 单独运行各脚本（高级）
